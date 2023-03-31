@@ -1,195 +1,250 @@
 #!/usr/bin/env python3
 
-from html.parser import unescape
-import socks
-import requests
 import socket
+from html.parser import unescape
+
+import requests
+
+import socks
+
+MONTHS = (
+    "Янв",
+    "Фев",
+    "Мар",
+    "Апр",
+    "Май",
+    "Июн",
+    "Июл",
+    "Авг",
+    "Сен",
+    "Окт",
+    "Ноя",
+    "Дек",
+)
 
 
 def get_cookie(params):
-    log = params['logger']
+    logger = params["logger"]
     res = {}
     for key in params:
-        if key != 'logger': # not serializable object
+        if key != "logger":  # not serializable object
             res[key] = params[key]
-    if params['proxy_port'] != -1:
-        socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, params['proxy_ip'], params['proxy_port'])
+    if params["proxy_port"] != -1:
+        socks.setdefaultproxy(
+            socks.PROXY_TYPE_SOCKS5, params["proxy_ip"], params["proxy_port"]
+        )
         socket.socket = socks.socksocket
     try:
         post_params = {
-            'login_username': params['username'].encode('cp1251'),
-            'login_password': params['password'].encode('cp1251'),
-            'login': b'\xe2\xf5\xee\xe4'  # '%E2%F5%EE%E4'
+            "login_username": params["username"].encode("cp1251"),
+            "login_password": params["password"].encode("cp1251"),
+            "login": b"\xe2\xf5\xee\xe4",  # '%E2%F5%EE%E4'
         }
-        r = requests.post('https://rutracker.org/forum/login.php',data=post_params,allow_redirects=False,timeout=20)
-        if 'bb_session' in r.cookies.keys():
-            cookie = 'bb_session=' + r.cookies['bb_session'] + '; bb_ssl=1'
-            res['cookie'] = cookie
-            log.debug('cookie: %s' % cookie)
-            return 'OK', res
+        r = requests.post(
+            "https://rutracker.org/forum/login.php",
+            data=post_params,
+            allow_redirects=False,
+            timeout=20,
+        )
+        if "bb_session" in r.cookies.keys():
+            cookie = "bb_session=" + r.cookies["bb_session"] + "; bb_ssl=1"
+            res["cookie"] = cookie
+            logger.debug("cookie: %s" % cookie)
+            return "OK", res
         else:
-            if 'неверный пароль'.encode('cp1251') in r.content:
-                error_text = 'wrong username/password'
-            elif 'введите код подтверждения'.encode('cp1251') in r.content:
-                error_text = 'site want captcha'
+            if "неверный пароль".encode("cp1251") in r.content:
+                error_text = "wrong username/password"
+            elif "введите код подтверждения".encode("cp1251") in r.content:
+                error_text = "site want captcha"
             else:
-                error_text = 'no cookies returned'
-            log.debug(error_text)
-            res['text'] = error_text
-            return 'ERROR', res
+                error_text = "no cookies returned"
+            logger.debug(error_text)
+            res["text"] = error_text
+            return "ERROR", res
     except requests.exceptions.RequestException as e:
-        log.debug('request exception', repr(e))
-        res['text'] = 'request exception'
-        return 'ERROR', res
+        logger.debug("request exception", repr(e))
+        res["text"] = "request exception"
+        return "ERROR", res
     except socket.timeout as e:
-        log.debug('request timeout exception')
-        res['text'] = 'request timeout exception'
-        return 'ERROR', res
+        logger.debug(f"request timeout exception: {e}")
+        res["text"] = "request timeout exception"
+        return "ERROR", res
 
 
 def get_page(params):
-    log = params['logger']
+    logger = params["logger"]
     res = {}
     for key in params:
-        if key != 'logger': # not serializable object
+        if key != "logger":  # not serializable object
             res[key] = params[key]
     # log.debug('get_page start')
-    if params['proxy_port'] != -1:
-        socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, params['proxy_ip'], params['proxy_port'])
+    if params["proxy_port"] != -1:
+        socks.setdefaultproxy(
+            socks.PROXY_TYPE_SOCKS5, params["proxy_ip"], params["proxy_port"]
+        )
         socket.socket = socks.socksocket
 
     def between(text, p_from, p_to):
         return text.split(p_from)[1].split(p_to)[0]
 
     try:
-        path = '/forum/viewtopic.php?t=%(id)i' % {'id': params['id']}
-        url = 'https://rutracker.org%(path)s' % {'path': path}
-        params['headers']['Cookie'] = params['cookie']
-        req = requests.get(url, headers=params['headers'], timeout=20)
+        path = "/forum/viewtopic.php?t=%(id)i" % {"id": params["id"]}
+        url = "https://rutracker.org%(path)s" % {"path": path}
+        params["headers"]["Cookie"] = params["cookie"]
+        req = requests.get(url, headers=params["headers"], timeout=20)
         html = req.text
-        if not (('<html' in html) or ('HTML' in html)):
-            res['text'] = 'not html in response'
-            return 'ERROR', res
-        if ('profile.php?mode=register">' in html) or ('action="https://rutracker.org/forum/login.php">' in html):
-            res['text'] = 'not logined'
-            return 'ERROR', res
+        if not (("<html" in html) or ("HTML" in html)):
+            res["text"] = "not html in response"
+            return "ERROR", res
+        if ('profile.php?mode=register">' in html) or (
+                'action="https://rutracker.org/forum/login.php">' in html
+        ):
+            res["text"] = "not logged in"
+            return "ERROR", res
         if len(html) < 1000:
-            res['text'] = 'too short'
-            return 'ERROR', res
+            res["text"] = "too short"
+            return "ERROR", res
         # f = open('html.txt', "w")
         # f.write(html)
         if not ('<a href="magnet:?xt=urn:btih:' in html):
-            return 'NO_HASH', res
+            return "NO_HASH", res
         else:
             line = list()
-            line.append(str(params['id']))
-            title = between(html, '<title>', ' :: RuTracker.org')
+            line.append(str(params["id"]))
+            title = between(html, "<title>", " :: RuTracker.org")
             title = unescape(title)
             line.append(title)
-            size = between(html, '<span id="tor-size-humn" title="', '">') #  '<span id="tor-size-humn"', '</span>')
+            size = between(
+                html, '<span id="tor-size-humn" title="', '">'
+            )  # '<span id="tor-size-humn"', '</span>')
             if not size.isdigit():
-                error_text = 'parser, size, not only numbers, id: %i' % params['id']
-                log.warning(error_text)
-                res['text'] = error_text
-                return 'ERROR', res
+                error_text = (
+                        "parser, size, not only numbers, id: %i" % params["id"]
+                )
+                logger.warning(error_text)
+                res["text"] = error_text
+                return "ERROR", res
             line.append(size)
             # seeds = '0'
             if '<span class="seed">Сиды:&nbsp; <b>' in html:
-                seeds = between(html, 'seed">Сиды:&nbsp; <b>', '</b>')
+                seeds = between(html, 'seed">Сиды:&nbsp; <b>', "</b>")
             else:
-                seeds = '0'
-                # error_text = 'parser, seeds, template not found, id: %i' % params['id']
+                seeds = "0"
+                # error_text = 'parser, seeds, template not found, id: %i' % params['id']  # noqa: E501
                 # log.debug(error_text)
                 # res['text'] = error_text
                 # return 'ERROR', res
             line.append(seeds)
             # peers = '0'
             if 'leech">Личи:&nbsp; <b>' in html:
-                peers = between(html, 'leech">Личи:&nbsp; <b>', '</b>')
+                peers = between(html, 'leech">Личи:&nbsp; <b>', "</b>")
             else:
-                peers = '0'
-                # error_text = 'parser, peers, template not found, id: %i' % params['id']
+                peers = "0"
+                # error_text = 'parser, peers, template not found, id: %i' % params['id']  # noqa: E501
                 # log.debug(error_text)
                 # res['text'] = error_text
                 # return 'ERROR', res
             line.append(peers)
-            hash = between(html, '<a href="magnet:?xt=urn:btih:', '&')
-            line.append(hash)
-            if 'torrent скачан:&nbsp; <b>' in html:
-                downloads = between(html, 'torrent скачан:&nbsp; <b>', " раз").strip()
-            elif '<td>.torrent скачан:</td>\n\t\t<td>' in html:
-                downloads = between(html, '<td>.torrent скачан:</td>\n\t\t<td>', " раз").strip()
-            elif ('Скачан: ' in html) and ('раза\t\t</td>' in html):
-                downloads = between(html, 'Скачан: ', 'раза\t\t</td>').strip()
-            elif ('Скачан: ' in html) and ('раз\t\t</td>' in html):
-                downloads = between(html, 'Скачан: ', 'раз\t\t</td>').strip()
+            hash_ = between(html, '<a href="magnet:?xt=urn:btih:', "&")
+            line.append(hash_)
+            if "torrent скачан:&nbsp; <b>" in html:
+                downloads = between(
+                    html, "torrent скачан:&nbsp; <b>", " раз"
+                ).strip()
+            elif "<td>.torrent скачан:</td>\n\t\t<td>" in html:
+                downloads = between(
+                    html, "<td>.torrent скачан:</td>\n\t\t<td>", " раз"
+                ).strip()
+            elif ("Скачан: " in html) and ("раза\t\t</td>" in html):
+                downloads = between(html, "Скачан: ", "раза\t\t</td>").strip()
+            elif ("Скачан: " in html) and ("раз\t\t</td>" in html):
+                downloads = between(html, "Скачан: ", "раз\t\t</td>").strip()
             else:
-                error_text = 'parser, downloads, template not found, id: %i' % params['id']
-                log.warning(error_text)
-                res['text'] = error_text
-                return 'ERROR', res
-            downloads = downloads.replace(',', '')
+                error_text = (
+                        "parser, downloads, template not found, id: %i"
+                        % params["id"]
+                )
+                logger.warning(error_text)
+                res["text"] = error_text
+                return "ERROR", res
+            downloads = downloads.replace(",", "")
             if not downloads.isdigit():
-                error_text = 'parser, downloads, bad template, id: %i' % params['id']
-                log.warning(error_text)
-                res['text'] = error_text
-                return 'ERROR', res
+                error_text = (
+                        "parser, downloads, bad template, id: %i" % params["id"]
+                )
+                logger.warning(error_text)
+                res["text"] = error_text
+                return "ERROR", res
 
             line.append(downloads)
-            if '>Зарегистрирован:</td>' in html:
-                date = between(html, '>Зарегистрирован:</td>', '</td>')
-                date = between(date, '<li>', '</li>')
+            if ">Зарегистрирован:</td>" in html:
+                date = between(html, ">Зарегистрирован:</td>", "</td>")
+                date = between(date, "<li>", "</li>")
             else:
-                error_text = 'parser, date, template not found, id: %i' % params['id']
-                log.warning(error_text)
-                res['text'] = error_text
-                return 'ERROR', res
+                error_text = f"parser, date, template not found, id: {params['id']}"  # noqa: E501
+                logger.warning(error_text)
+                res["text"] = error_text
+                return "ERROR", res
 
-            months = ("Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек")
-            for i in range(len(months)):
-                date = date.replace(months[i], "%02d" % (i+1))
+            for i in range(len(MONTHS)):
+                date = date.replace(MONTHS[i], "%02d" % (i + 1))
             line.append(date)
 
-            category_htmlpart = between(html, '<td class="nav w100"', '</td>')
-            category_temp = category_htmlpart.replace('">', "</a>").split('</a>')
-            category_list = list((i for i in category_temp if
-                                  ('<em>' not in i) and ('\t' not in i) and ('style="' not in i) and (
-                                  'Список форумов ' not in i)))
-            category_string = ''
+            category_htmlpart = between(html, '<td class="nav w100"', "</td>")
+            category_temp = category_htmlpart.replace('">', "</a>").split(
+                "</a>"
+            )
+            category_list = list(
+                (
+                    i
+                    for i in category_temp
+                    if "<em>" not in i
+                    and "\t" not in i
+                    and 'style="' not in i
+                    and "Список форумов " not in i
+                )
+            )
+            category_string = ""
             for one_category in category_list:
-                category_string += one_category + ' | '
+                category_string += one_category + " | "
             category_string = category_string[:-3]
             line.append(category_string)
 
-            line = '\t'.join(line)
-            descr = between(html, '<div class="post_body" id="', '<div class="clear"')
-            descr = descr.split('>', 1)[1]
+            line = "\t".join(line)
+            descr = between(
+                html, '<div class="post_body" id="', '<div class="clear"'
+            )
+            descr = descr.split(">", 1)[1]
             descr = descr.strip()
-            if descr.endswith('</div><!--/post_body-->'):
+            if descr.endswith("</div><!--/post_body-->"):
                 descr = descr[:-23].strip()
-            elif descr.endswith('</div>'):
+            elif descr.endswith("</div>"):
                 descr = descr[:-6].strip()
             descr = unescape(descr)
-            res['line'] = line
-            res['description'] = descr
-            return 'OK', res
+            res["line"] = line
+            res["description"] = descr
+            return "OK", res
+
     except requests.exceptions.RequestException as e:
-        error_text = 'request exception, id: %i' % params['id']
-        log.debug(error_text, exc_info=True)
-        res['text'] = error_text
-        return 'ERROR', res
+        error_text = f"request exception (id = {params['id']}): {e}"
+        logger.debug(error_text, exc_info=True)
+        res["text"] = error_text
+        return "ERROR", res
+
     except socket.timeout as e:
-        error_text = 'request timeout exception, id: %i' % params['id']
-        log.debug(error_text, exc_info=True)
-        res['text'] = error_text
-        return 'ERROR', res
+        error_text = f"request timeout exception (id: {params['id']}): {e}"
+        logger.debug(error_text, exc_info=True)
+        res["text"] = error_text
+        return "ERROR", res
+
     except socks.Socks5Error as e:
-        error_text = 'request exception (socket error), id: %i' % params['id']
-        log.debug(error_text, exc_info=True)
-        res['text'] = error_text
-        return 'ERROR', res
+        error_text = f"request exception (socket error, id: {params['id']}: {e}"
+        logger.debug(error_text, exc_info=True)
+        res["text"] = error_text
+        return "ERROR", res
+
     except Exception as e:
-        error_text = 'unknown error, id: %i' % params['id']
-        log.exception(error_text)
-        res['text'] = error_text
-        return 'ERROR', res
+        error_text = f"unknown error (id = {params['id']}): {e}"
+        logger.exception(error_text)
+        res["text"] = error_text
+        return "ERROR", res

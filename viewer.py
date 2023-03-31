@@ -1,60 +1,79 @@
 #!/usr/bin/env python3
 
+import io
 import sys
 import urllib.parse
-from tarfile import TarFile
-import io
 from datetime import datetime
+from tarfile import TarFile
 
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
 from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtWidgets import *
 
-tree_columns = ('id', 'name', 'size', 'seeds', 'peers', 'hash', 'downloads', 'date', 'category')
-tree_columns_visible = ('ID', 'Название', 'Размер', 'Сиды', 'Пиры', 'Hash', 'Скачиваний', 'Дата', 'Раздел')
+TREE_COLUMNS = (
+    "id",
+    "name",
+    "size",
+    "seeds",
+    "peers",
+    "hash",
+    "downloads",
+    "date",
+    "category",
+)
+TREE_COLUMNS_VISIBLE = (
+    "ID",
+    "Название",
+    "Размер",
+    "Сиды",
+    "Пиры",
+    "Hash",
+    "Скачиваний",
+    "Дата",
+    "Раздел",
+)
 
 
 class NumberSortModel(QSortFilterProxyModel):
-    def lessThan(self, left, right):
-        if not left.data():
+    @staticmethod
+    def _scaled(value):
+        if value[-2:] == " B":
+            return float(value[:-2])
+        elif value[-3:] == " KB":
+            return float(value[:-3]) * 1024
+        elif value[-3:] == " MB":
+            return float(value[:-3]) * 1024 * 1024
+        elif value[-3:] == " GB":
+            return float(value[:-3]) * 1024 * 1024 * 1024
+
+    def lessThan(self, left_, right_):
+        if not left_.data():
             return True
-        if not right.data():
+        if not right_.data():
             return False
 
-        if left.column() in [tree_columns.index('id'), tree_columns.index('seeds'), tree_columns.index('peers'),
-                             tree_columns.index('downloads')]:
-            lvalue = int(left.data())
-            rvalue = int(right.data())
-        elif left.column() == tree_columns.index('date'):
+        if left_.column() in [
+            TREE_COLUMNS.index("id"),
+            TREE_COLUMNS.index("seeds"),
+            TREE_COLUMNS.index("peers"),
+            TREE_COLUMNS.index("downloads"),
+        ]:
+            lvalue = int(left_.data())
+            rvalue = int(right_.data())
+        elif left_.column() == TREE_COLUMNS.index("date"):
             try:
-                lvalue = datetime.strptime(left.data(), '%d-%b-%y %H:%M')
-                rvalue = datetime.strptime(right.data(), '%d-%b-%y %H:%M')
+                lvalue = datetime.strptime(left_.data(), "%d-%b-%y %H:%M")
+                rvalue = datetime.strptime(right_.data(), "%d-%b-%y %H:%M")
             except ValueError:
-                lvalue = datetime.strptime(left.data(), '%d-%m-%y %H:%M')
-                rvalue = datetime.strptime(right.data(), '%d-%m-%y %H:%M')
-        elif left.column() == tree_columns.index('size'):
-            lvalue = left.data()
-            rvalue = right.data()
-            if lvalue[-2:] == ' B':
-                lvalue = float(lvalue[:-2])
-            elif lvalue[-3:] == ' KB':
-                lvalue = float(lvalue[:-3]) * 1024
-            elif lvalue[-3:] == ' MB':
-                lvalue = float(lvalue[:-3]) * 1024 * 1024
-            elif lvalue[-3:] == ' GB':
-                lvalue = float(lvalue[:-3]) * 1024 * 1024 * 1024
-            if rvalue[-2:] == ' B':
-                rvalue = float(rvalue[:-2])
-            elif rvalue[-3:] == ' KB':
-                rvalue = float(rvalue[:-3]) * 1024
-            elif rvalue[-3:] == ' MB':
-                rvalue = float(rvalue[:-3]) * 1024 * 1024
-            elif rvalue[-3:] == ' GB':
-                rvalue = float(rvalue[:-3]) * 1024 * 1024 * 1024
+                lvalue = datetime.strptime(left_.data(), "%d-%m-%y %H:%M")
+                rvalue = datetime.strptime(right_.data(), "%d-%m-%y %H:%M")
+        elif left_.column() == TREE_COLUMNS.index("size"):
+            lvalue = self._scaled(left_.data())
+            rvalue = self._scaled(right_.data())
         else:
-            lvalue = left.data()
-            rvalue = right.data()
+            lvalue = left_.data()
+            rvalue = right_.data()
         return lvalue < rvalue
 
 
@@ -65,7 +84,7 @@ class MainWindow(QMainWindow):
         frame = QFrame(self)
 
         self.result_count = 0
-        self.founded_items = []
+        self.found_items = []
 
         self.grid = QGridLayout(frame)
         self.setCentralWidget(frame)
@@ -86,8 +105,8 @@ class MainWindow(QMainWindow):
         proxy = NumberSortModel()
         proxy.setSourceModel(self.model)
         self.tree.setModel(proxy)
-        self.model.setColumnCount(len(tree_columns))
-        self.model.setHorizontalHeaderLabels(tree_columns_visible)
+        self.model.setColumnCount(len(TREE_COLUMNS))
+        self.model.setHorizontalHeaderLabels(TREE_COLUMNS_VISIBLE)
         self.tree.verticalHeader().setVisible(False)
         self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -95,11 +114,11 @@ class MainWindow(QMainWindow):
         self.tree.verticalHeader().setDefaultSectionSize(24)
         self.webview.setUrl(QUrl("about:blank"))
         self.webview.setZoomFactor(0.85)
-        self.search.setText('Искать')
+        self.search.setText("Искать")
         self.input2.setMaximumWidth(300)
-        self.setWindowTitle('RuTracker database   |   by strayge')
-        self.input.setPlaceholderText('Строка для поиска в названии')
-        self.input2.setPlaceholderText('Строка для поиска в категории')
+        self.setWindowTitle("RuTracker database   |   by strayge")
+        self.input.setPlaceholderText("Строка для поиска в названии")
+        self.input2.setPlaceholderText("Строка для поиска в категории")
 
         self.grid.addWidget(self.input, 0, 0)
         self.grid.addWidget(self.input2, 0, 1)
@@ -124,99 +143,112 @@ class MainWindow(QMainWindow):
     def do_update_table(self, finish=False):
         if finish:
             self.timer.stop()
-        self.model.setRowCount(len(self.founded_items))
-        for i in range(self.result_count, len(self.founded_items)):
-            for j in range(len(tree_columns)):
-                item = self.founded_items[i]
+        self.model.setRowCount(len(self.found_items))
+        for i in range(self.result_count, len(self.found_items)):
+            for j in range(len(TREE_COLUMNS)):
+                item = self.found_items[i]
                 qitem = QStandardItem()
-                qitem.setData(QVariant(item[j]), Qt.DisplayRole)
+                qitem.setData(QVariant(item[j]), Qt.ItemDataRole.DisplayRole)
                 self.model.setItem(i, j, qitem)
             self.result_count += 1
 
-        # self.tree.sortByColumn(tree_columns.index('seeds'), Qt.DescendingOrder)
+        # self.tree.sortByColumn(
+        #     tree_columns.index('seeds'), Qt.DescendingOrder
+        # )
+
         self.tree.resizeColumnsToContents()
-        if self.tree.columnWidth(tree_columns.index('name')) > 500:
-            self.tree.setColumnWidth(tree_columns.index('name'), 500)
+        if self.tree.columnWidth(TREE_COLUMNS.index("name")) > 500:
+            self.tree.setColumnWidth(TREE_COLUMNS.index("name"), 500)
         if finish:
             self.timer.stop()
-            self.statusbar.showMessage('Поиск закончен. Найдено %i записей' % len(self.founded_items))
-            self.search.setText('Поиск')
+            self.statusbar.showMessage(
+                f"Поиск закончен. Найдено {len(self.found_items)} записей"
+            )
+            self.search.setText("Поиск")
         else:
-            self.statusbar.showMessage('Идет поиск... Найдено %i записей' % self.result_count)
+            self.statusbar.showMessage(
+                f"Идет поиск... Найдено {self.result_count} записей"
+            )
 
-    def do_add_founded_item(self, item):
-        for j in range(len(tree_columns)):
-            if j == tree_columns.index('size'):
+    def _add_found_item(self, item):
+        for j in range(len(TREE_COLUMNS)):
+            if j == TREE_COLUMNS.index("size"):
                 size = int(item[j])
                 if size < 1024:
-                    item[j] = '%.0f B' % (float(item[j]))
+                    item[j] = "%.0f B" % (float(item[j]))
                 elif size < 1024 * 1024:
-                    item[j] = '%.0f KB' % (float(item[j]) / 1024)
+                    item[j] = "%.0f KB" % (float(item[j]) / 1024)
                 elif size < 1024 * 1024 * 1024:
-                    item[j] = '%.0f MB' % (float(item[j]) / (1024 * 1024))
+                    item[j] = "%.0f MB" % (float(item[j]) / (1024 * 1024))
                 else:
-                    item[j] = '%.2f GB' % (float(item[j]) / (1024 * 1024 * 1024))
-        self.founded_items.append(item)
+                    item[j] = "%.2f GB" % (
+                        float(item[j]) / (1024 * 1024 * 1024)
+                    )
+        self.found_items.append(item)
 
     def do_show_status(self, text):
-        if text == 'Поиск закончен.':
+        if text == "Поиск закончен.":
             self.do_update_table(True)
         else:
-            self.statusbar.showMessage(text + ' Найдено %i записей.' % len(self.founded_items))
+            self.statusbar.showMessage(
+                text + " Найдено %i записей." % len(self.found_items)
+            )
 
     def do_search(self):
-        if self.search.text() == 'Отмена':
+        if self.search.text() == "Отмена":
             if self.searcher and self.searcher.isRunning():
-                self.search.setText('Поиск')
+                self.search.setText("Поиск")
                 self.searcher.stop()
                 self.timer.stop()
                 return
 
         self.first_result = True
-        self.search.setText('Отмена')
+        self.search.setText("Отмена")
         self.result_count = 0
-        self.founded_items = []
+        self.found_items = []
         self.model.setRowCount(0)
         self.searcher = SearchThread(self.input.text(), self.input2.text())
-        self.searcher.add_founded_item.connect(self.do_add_founded_item)
+        self.searcher.add_found_item.connect(self._add_found_item)
         self.searcher.status.connect(self.do_show_status)
         self.searcher.start(QThread.LowestPriority)
         self.timer.start()
 
     def do_work(self, index=None):
-        index = self.tree.model().mapToSource( index )
-        
-        name = self.model.item(index.row(), tree_columns.index('name')).text()
-        hash = self.model.item(index.row(), tree_columns.index('hash')).text()
+        index = self.tree.model().mapToSource(index)
+
+        name = self.model.item(index.row(), TREE_COLUMNS.index("name")).text()
+        hash_ = self.model.item(index.row(), TREE_COLUMNS.index("hash")).text()
         args = (
-            ('magnet:?xt=urn:btih:', name),
-            ('dn=', hash),
-            ('tr=', 'udp://tracker.publicbt.com:80'),
-            ('tr=', 'udp://tracker.openbittorrent.com:80'),
-            ('tr=', 'tracker.ccc.de:80'),
-            ('tr=', 'tracker.istole.it:80'),
-            ('tr=', 'udp://tracker.publicbt.com:80')
+            ("magnet:?xt=urn:btih:", name),
+            ("dn=", hash_),
+            ("tr=", "udp://tracker.publicbt.com:80"),
+            ("tr=", "udp://tracker.openbittorrent.com:80"),
+            ("tr=", "tracker.ccc.de:80"),
+            ("tr=", "tracker.istole.it:80"),
+            ("tr=", "udp://tracker.publicbt.com:80"),
         )
-        link = ''
+        link = ""
         for i, j in args:
-            link += i + urllib.parse.quote_plus(j).replace('+', '%20')
+            link += i + urllib.parse.quote_plus(j).replace("+", "%20")
         # noinspection PyArgumentList
         QApplication.clipboard().setText(link)
-        print('magnet link copied to clipboard.')
+        print("magnet link copied to clipboard.")
 
     def do_select(self, index=None):
-        id = int(self.model.item(index.row(), tree_columns.index('id')).text())
+        id_ = int(self.model.item(index.row(), TREE_COLUMNS.index("id")).text())
         try:
-            archive = TarFile.open('descr/%03i/%05i.tar.bz2' % (id // 100000, id // 1000), 'r:bz2')
-            s = archive.extractfile('%08i' % id).read().decode()
+            archive = TarFile.open(
+                "descr/%03i/%05i.tar.bz2" % (id_ // 100000, id_ // 1000), "r:bz2"  # noqa: E501
+            )
+            s = archive.extractfile("%08i" % id_).read().decode()
             archive.close()
             self.webview.setHtml(s)
         except FileNotFoundError:
-            self.webview.setHtml('Нет описания')
+            self.webview.setHtml("Нет описания")
 
 
 class SearchThread(QThread):
-    add_founded_item = pyqtSignal(object)
+    add_found_item = pyqtSignal(object)
     status = pyqtSignal(object)
 
     def __init__(self, text, category):
@@ -225,7 +257,7 @@ class SearchThread(QThread):
         self.category = category
 
     def stop(self):
-        self.status.emit('Поиск остановлен.')
+        self.status.emit("Поиск остановлен.")
         self.terminate()
 
     def run(self):
@@ -237,58 +269,63 @@ class SearchThread(QThread):
         words_not_contains = []
         words_category = []
 
-        for w in text.split(' '):
-            if (len(w) > 1) and (w[0]) == '-':
+        for w in text.split(" "):
+            if (len(w) > 1) and (w[0]) == "-":
                 words_not_contains.append(w[1:])
-            elif (len(w) > len('limit:')) and (w[:6] == 'limit:'):
+            elif (len(w) > len("limit:")) and (w[:6] == "limit:"):
                 limit = int(w[6:])
             else:
                 words_contains.append(w)
-        for w in category.split(' '):
+        for w in category.split(" "):
             words_category.append(w)
 
-        archive = TarFile.open('table_sorted.tar.bz2', 'r:bz2')
+        archive = TarFile.open("table_sorted.tar.bz2", "r:bz2")
         member = archive.members[0]
         buffered_reader = archive.extractfile(member)
-        buffered_text_reader = io.TextIOWrapper(buffered_reader, encoding='utf8')
+        buffered_text_reader = io.TextIOWrapper(
+            buffered_reader, encoding="utf8"
+        )
 
         founded_items = 0
 
         for line in buffered_text_reader:
-            item = line.strip().split(sep='\t')
-            next = False
+            item = line.strip().split(sep="\t")
+            next_ = False
+
             for w in words_contains:
-                if w.lower() in item[tree_columns.index('name')].lower():
+                if w.lower() in item[TREE_COLUMNS.index("name")].lower():
                     pass
                 else:
-                    next = True
+                    next_ = True
                     break
-            if next:
+            if next_:
                 continue
+
             for w in words_not_contains:
-                if w.lower() in item[tree_columns.index('name')].lower():
-                    next = True
+                if w.lower() in item[TREE_COLUMNS.index("name")].lower():
+                    next_ = True
                     break
-            if next:
+            if next_:
                 continue
+
             for w in words_category:
-                if w.lower() in item[tree_columns.index('category')].lower():
+                if w.lower() in item[TREE_COLUMNS.index("category")].lower():
                     pass
                 else:
-                    next = True
+                    next_ = True
                     break
-            if next:
+            if next_:
                 continue
 
             founded_items += 1
-            self.add_founded_item.emit(item)
+            self.add_found_item.emit(item)
 
             if founded_items >= limit:
-                self.status.emit('Поиск закончен.')
+                self.status.emit("Поиск закончен.")
                 break
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     mainWin = MainWindow()
     mainWin.show()
