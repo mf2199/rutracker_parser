@@ -4,6 +4,7 @@ import logging
 import os
 import queue  # for exceptions
 import random
+
 # import requests
 import signal
 import time
@@ -15,10 +16,9 @@ from settings import Settings
 
 def worker(input_, output):
     try:
-        logger_ = logging.getLogger(
-            "thread(%3i)" % random.randrange(1, 999)
-        )  # random name
-        logger_.debug("starting thread")
+        # A random logger name
+        logger_ = logging.getLogger(f"thread({random.randrange(1, 999):3})")
+        logger_.info("Starting thread...")
 
         for new_input in iter(input_.get, ("STOP", {})):
             # log.debug('thread iteration')
@@ -31,10 +31,306 @@ def worker(input_, output):
                 status_, details_ = parse.get_page(new_input[1])
                 output.put((new_input[0], status_, details_))
             else:
-                logger_.warning("unknown task: %s" % new_input[0])
+                logger_.warning(f"Unknown task: {new_input[0]}")
 
     except KeyboardInterrupt:
         pass
+
+
+class Loader:
+    def __init__(self):
+        self.settings = Settings()
+        self.options = self.settings.options
+
+        self.task_queue = Queue()
+        self.done_queue = Queue()
+
+        self.settings.prepare_lists()
+
+        self.counters = {
+            "finished_all": 0,
+            "error_all": 0,
+            "nohash_all": 0,
+            "finished_last": 0,
+            "error_last": 0,
+            "nohash_last": 0,
+        }
+
+        self._nexttime = time.time()
+        self._exit_counter = 0
+        self._status_nexttime = time.time()
+        self._ids_pointer = 0
+
+        self._processes = []
+
+    def _start_threads(self):
+        logger.info(f"Numbers of allocated threads: {self.options.threads}")
+        for _ in range(self.options.threads):
+            p = Process(target=worker, args=(self.task_queue, self.done_queue))
+            p.start()
+            self._processes.append(p)
+
+    def _stop_all_threads(self):
+        logger.debug("Stopping all threads and exiting")
+        for _ in range(self.options.threads_num):
+            self.task_queue.put(("STOP", {}))
+
+    def _setup_timing(self):
+        if time.time() > self._status_nexttime:
+            self._status_nexttime = time.time() + 10
+            speed = (
+                self.counters["finished_last"] + self.counters["nohash_last"]
+            ) * 0.1
+            if speed != 0:
+                time_remaining = (
+                    len(self.settings.ids) - self._ids_pointer
+                ) / speed
+            else:
+                time_remaining = 0
+
+            m, s = divmod(time_remaining, 60)
+            h, m = divmod(m, 60)
+            logger.info(
+                f'Last 10 sec: {self.counters["finished_last"]} - OK, '
+                f'{self.counters["nohash_last"]} - NOHASH, '
+                f'{self.counters["error_last"]} - ERROR, Remaining: '
+                f"{(len(self.settings.ids) - self._ids_pointer) // 1000,}, "
+                f'{h}:{m}"'
+            )
+
+            self.counters["finished_all"] += self.counters["finished_last"]
+            self.counters["error_all"] += self.counters["error_last"]
+            self.counters["nohash_all"] += self.counters["nohash_last"]
+            self.counters["finished_last"] = 0
+            self.counters["error_last"] = 0
+            self.counters["nohash_last"] = 0
+
+    def _set_cookie(self, status, details):
+        logger.info("Setting a new cookie")
+        if status == "OK":
+            logger.debug("processing loop. cookie - ok")
+            self.settings.set_free_proxy(
+                details["proxy_ip"], details["proxy_port"]
+            )
+            self.settings.set_cookie(details["username"], details["cookie"])
+        elif status == "ERROR":
+            logger.error(f"Processing loop - cookie error: {details['text']}")
+            self.settings.set_free_proxy(
+                details["proxy_ip"], details["proxy_port"]
+            )
+            # settings.set_cookie_error(details['username'])
+        else:
+            logger.warning(
+                f"Processing loop - unknown cookie status: {status}"
+            )
+
+    def _get_page(self, status, details):
+        logger.info("Getting a new page")
+        id_ = details["id"]
+
+        logger.info(f"Processing status: {status}")
+        if status == "OK":
+            self.counters["finished_last"] += 1
+            logger.debug(f"Processing loop, get page - OK, ID: {id_}")
+            self.settings.set_free_proxy(
+                details["proxy_ip"], details["proxy_port"]
+            )
+            self.settings.set_free_cookie(details["cookie"])
+
+            if not os.path.exists(self.options.descr_folder):
+                os.mkdir(self.options.descr_folder)
+            path = os.path.join(
+                self.options.descr_folder, f"{id_ // 100000:03}/"
+            )
+            if not os.path.exists(path):
+                os.mkdir(path)
+
+            filename = os.path.join(path, f"{id_:08}")
+            with open(filename, "w", encoding="utf8") as f:
+                f.write(details["description"])
+
+            self.settings.handle_table_file.write(f"{details['line']}\n")
+            self.settings.handle_finished_file.write(f"{id_}\n")
+
+        elif status == "NO_HASH":
+            self.counters["nohash_last"] += 1
+            logger.debug(f"Processing loop, get page - NO HASH, ID: {id_}")
+            self.settings.set_free_proxy(
+                details["proxy_ip"], details["proxy_port"]
+            )
+            self.settings.set_free_cookie(details["cookie"])
+            self.settings.handle_finished_file.write(f"{id_}\n")
+
+        elif status == "ERROR":
+            self.counters["error_last"] += 1
+            logger.error(
+                f"Processing loop. get page - error: {details['text']}"
+            )
+
+            if details["text"] == "not logined":
+                self.settings.set_error_cookie(details["cookie"])
+            self.settings.set_free_cookie(details["cookie"])
+
+            if (
+                "request exception" in details["text"]
+                or "request timeout exception" in details["text"]
+            ):
+                self.settings.set_error_proxy(
+                    details["proxy_ip"], details["proxy_port"]
+                )
+
+            self.settings.set_free_proxy(
+                details["proxy_ip"], details["proxy_port"]
+            )
+            self.settings.ids.append(int(id_))
+
+        else:
+            logger.warning(f"Unknown status encountered: {status}, id: {id_}")
+
+    def _run_cycle(self):
+        ...
+
+    def _add_new_tasks(self):
+        self._exit_counter = 0
+        id_max = min(
+            self._ids_pointer + self.settings.qsize,
+            len(self.settings.ids),
+        )
+        for i in range(self._ids_pointer, id_max):
+            proxy = self.settings.get_free_proxy()
+            logger.info(f"Proxy obtained from settings: {proxy}")
+            if not proxy:
+                if time.time() > self._nexttime:
+                    logger.info("No free proxies are available")
+                    logger.debug(f"Proxies: {self.settings.proxy_list}")
+                    self._nexttime = time.time() + 60
+                break
+
+            cookie = self.settings.get_free_cookie()
+            if not cookie:
+                if time.time() > self._nexttime:
+                    logger.info("No free cookies are available")
+                    logger.debug(f"Cookies: {self.settings.login_list}")
+                    self._nexttime = time.time() + 60
+                break
+
+            work = (
+                "GET_PAGE",
+                {
+                    "id": int(self.settings.ids[i]),
+                    "cookie": cookie,
+                    "headers": self.settings.headers,
+                    "proxy_ip": proxy["ip"],
+                    "proxy_port": int(proxy["port"]),
+                },
+            )
+            self.task_queue.put(work)
+            self._ids_pointer += 1
+
+    def run(self):
+        self._start_threads()
+        self.settings.open_files()
+
+        if self.options.print:
+            self._stop_all_threads()
+            return
+
+        if not self.settings.ids:
+            logger.info("Empty input/left list. Terminated")
+            self._stop_all_threads()
+            return
+
+        self.settings.load_cookies()
+        for login in self.settings.login_list:
+            if not login.get("cookie"):
+                proxy = self.settings.get_free_proxy()
+                work = (
+                    "COOKIE",
+                    {
+                        "username": login["username"],
+                        "password": login["password"],
+                        "proxy_ip": proxy["ip"],
+                        "proxy_port": proxy["port"],
+                    },
+                )
+                self.task_queue.put(work)
+
+        while True:
+            self._setup_timing()
+
+            # Adding new tasks
+            if (
+                self.task_queue.qsize() < self.settings.qsize
+                and self._ids_pointer < len(self.settings.ids)
+            ):
+                logger.info("Adding new tasks")
+                self._add_new_tasks()
+
+            if self.task_queue.empty() and self.done_queue.empty():
+                logger.info("The queues might be empty")
+                # common part
+                if self._exit_counter > 1:
+                    logger.info("The queues are empty!")
+                time.sleep(1)
+                self._exit_counter += 1
+                if self._exit_counter > 5:
+                    self._stop_all_threads()
+                    return
+            else:
+                self._exit_counter = 0
+
+            try:
+                task, status, _details = self.done_queue.get(timeout=1)
+                logger.info(f"TASK: {task}")
+                logger.info(f"STATUS: {status}")
+                logger.info(f"DETAILS: {_details}")
+            except queue.Empty:
+                if any(_.is_alive() for _ in self._processes):
+                    logger.info("Some threads are still alive, continuing.")
+                    continue
+                else:
+                    logger.info("All threads are dead, exiting.")
+                    return
+
+            s = signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+            if task == "COOKIE":
+                self._set_cookie(status, _details)
+
+            elif task == "GET_PAGE":
+                self._get_page(status, _details)
+
+            else:
+                logger.warning(f"Processing loop - unknown task: {task}")
+
+            signal.signal(signal.SIGINT, s)
+
+        self.settings.close_files()
+
+
+class CustomFormatter(logging.Formatter):
+    # def __init__(self, fmt=None, datefmt=None, style='%', validate=True):
+    #     super().__init__(fmt, datefmt, style, validate)
+
+    grey = "\x1b[38;20m"
+    yellow = "\x1b[33;20m"
+    red = "\x1b[31;20m"
+    bold_red = "\x1b[31;1m"
+    reset = "\x1b[0m"
+    format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"  # noqa: E501
+
+    FORMATS = {
+        logging.DEBUG: grey + format + reset,
+        logging.INFO: grey + format + reset,
+        logging.WARNING: yellow + format + reset,
+        logging.ERROR: red + format + reset,
+        logging.CRITICAL: bold_red + format + reset
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
 
 
 if __name__ == "__main__":
@@ -45,260 +341,22 @@ if __name__ == "__main__":
 
     # logging.basicConfig(level=logging.DEBUG, format=f_str, filename='log.txt')
 
-    consoleHandler = logging.StreamHandler()
-    consoleHandler.setFormatter(logging.Formatter(f_str))
-    logging.getLogger().addHandler(consoleHandler)
-    logger = logging.getLogger(__name__)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(CustomFormatter(f_str))
+    logging.getLogger().addHandler(console_handler)
 
-    # disable debug logging for urllib3 in requests
-    urllib3_logger = logging.getLogger("urllib3")
-    urllib3_logger.setLevel(logging.CRITICAL)
+    logger = logging.getLogger(__name__)
+    # logger.addHandler(console_handler)
+
+    # Disabling debug logging for urllib3 in requests
+    # urllib3_logger = logging.getLogger("urllib3")
+    # urllib3_logger.setLevel(logging.ERROR)
 
     logger.info("\n\n\n========== Program started ==========")
 
+    loader = Loader()
+
     try:
-        settings = Settings()
-
-        task_queue = Queue()
-        done_queue = Queue()
-
-        processes = []
-        logger.info("numbers of threads: %i" % settings.options.threads)
-        for _ in range(settings.options.threads):
-            p = Process(target=worker, args=(task_queue, done_queue))
-            p.start()
-            processes.append(p)
-
-        settings.prepare_lists()
-        settings.open_files()
-
-        def stop_threads_and_exit():
-            logger.debug("Stopping all threads and exiting")
-            for _ in range(settings.options.threads_num):
-                task_queue.put(("STOP", {}))
-            exit()
-
-        if settings.options.print:
-            stop_threads_and_exit()
-
-        if not settings.ids:
-            logger.info("Empty input/left list. Terminated")
-            stop_threads_and_exit()
-
-        settings.load_cookies()
-        for login in settings.login_list:
-            if not login.get("cookie"):
-                proxy = settings.get_free_proxy()
-                work = (
-                    "COOKIE",
-                    {
-                        "username": login["username"],
-                        "password": login["password"],
-                        "proxy_ip": proxy["ip"],
-                        "proxy_port": int(proxy["port"]),
-                    },
-                )
-                task_queue.put(work)
-
-        ids_pointer = 0
-        # bulk = 30
-
-        nexttime = time.time()
-        exit_counter = 0
-        status_nexttime = time.time()
-        ids_status = {
-            "finished_all": 0,
-            "error_all": 0,
-            "nohash_all": 0,
-            "finished_last": 0,
-            "error_last": 0,
-            "nohash_last": 0,
-        }
-
-        while True:
-            if time.time() > status_nexttime:
-                status_nexttime = time.time() + 10
-                speed = (
-                    ids_status["finished_last"] + ids_status["nohash_last"]
-                ) / 10.0
-                if speed != 0:
-                    time_remaining = (len(settings.ids) - ids_pointer) / speed
-                else:
-                    time_remaining = 0
-                m, s = divmod(time_remaining, 60)
-                h, m = divmod(m, 60)
-                logger.info(
-                    f'Last 10 sec: {ids_status["finished_last"]} - OK, '
-                    f'{ids_status["nohash_last"]} - NOHASH, '
-                    f'{ids_status["error_last"]} - ERROR, Remaining: '
-                    f'{(len(settings.ids) - ids_pointer) // 1000,}, {h}:{m}"'
-                )
-
-                ids_status["finished_all"] += ids_status["finished_last"]
-                ids_status["error_all"] += ids_status["error_last"]
-                ids_status["nohash_all"] += ids_status["nohash_last"]
-                ids_status["finished_last"] = 0
-                ids_status["error_last"] = 0
-                ids_status["nohash_last"] = 0
-
-            # Adding new tasks
-            if task_queue.qsize() < settings.qsize and ids_pointer < len(settings.ids):  # noqa : E501
-                exit_counter = 0
-                id_max = min(ids_pointer + settings.qsize, len(settings.ids))
-                for i in range(ids_pointer, id_max):
-                    proxy = settings.get_free_proxy()
-                    if not proxy:
-                        if time.time() > nexttime:
-                            logger.info("No free proxies are available")
-                            logger.debug(f"Proxies: {settings.proxy_list}")
-                            nexttime = time.time() + 60
-                        break
-
-                    cookie = settings.get_free_cookie()
-                    if not cookie:
-                        if time.time() > nexttime:
-                            logger.info("No free cookies are available")
-                            logger.debug(f"Cookies: {settings.login_list}")
-                            nexttime = time.time() + 60
-                        break
-
-                    work = (
-                        "GET_PAGE",
-                        {
-                            "id": int(settings.ids[i]),
-                            "cookie": cookie,
-                            "headers": settings.headers,
-                            "proxy_ip": proxy["ip"],
-                            "proxy_port": int(proxy["port"]),
-                        },
-                    )
-                    task_queue.put(work)
-                    ids_pointer += 1
-
-            if task_queue.empty() and done_queue.empty():
-                # common part
-                if exit_counter > 1:
-                    logger.info("Queues are empty.")
-                time.sleep(1)
-                exit_counter += 1
-                if exit_counter > 5:
-                    stop_threads_and_exit()
-            else:
-                exit_counter = 0
-
-            task = None
-            status = None
-            details = None
-
-            try:
-                task, status, details = done_queue.get(timeout=1)
-            except queue.Empty:
-                anybody_alive = False
-                for process in processes:
-                    if process.is_alive():
-                        anybody_alive = True
-                        break
-                if anybody_alive:
-                    continue
-                else:
-                    logger.info("All threads are dead, exiting.")
-                    exit()
-
-            s = signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-            if task == "COOKIE":
-                if status == "OK":
-                    logger.debug("processing loop. cookie - ok")
-                    settings.set_free_proxy(
-                        details["proxy_ip"], details["proxy_port"]
-                    )
-                    settings.set_cookie(details["username"], details["cookie"])
-                elif status == "ERROR":
-                    logger.error(
-                        f"Processing loop - cookie error: {details['text']}"
-                    )
-                    settings.set_free_proxy(
-                        details["proxy_ip"], details["proxy_port"]
-                    )
-                    # settings.set_cookie_error(details['username'])
-                else:
-                    logger.warning(
-                        f"Processing loop - unknown cookie status: {status}"
-                    )
-
-            elif task == "GET_PAGE":
-                if status == "OK":
-                    ids_status["finished_last"] += 1
-                    logger.debug(
-                        f"Processing loop, get page - OK, id: {details['id']}"
-                    )
-                    settings.set_free_proxy(
-                        details["proxy_ip"], details["proxy_port"]
-                    )
-                    settings.set_free_cookie(details["cookie"])
-                    id_, line, description = (
-                        details["id"],
-                        details["line"],
-                        details["description"],
-                    )
-
-                    if not os.path.exists(settings.options.descr_folder):
-                        os.mkdir(settings.options.descr_folder)
-                    path = os.path.join(
-                        settings.options.descr_folder,
-                        "%03i/" % (id_ // 100000),
-                    )
-                    if not os.path.exists(path):
-                        os.mkdir(path)
-
-                    filename = os.path.join(path, "%08i" % id_)
-                    with open(filename, "w", encoding="utf8") as f:
-                        f.write(description)
-
-                    settings.handle_table_file.write(line + "\n")
-                    settings.handle_finished_file.write(str(id_) + "\n")
-
-                elif status == "NO_HASH":
-                    ids_status["nohash_last"] += 1
-                    logger.debug(
-                        "Processing loop, get page - NO HASH, id: "
-                        f"{details['id']}"
-                    )
-                    settings.set_free_proxy(
-                        details["proxy_ip"], details["proxy_port"]
-                    )
-                    settings.set_free_cookie(details["cookie"])
-                    id_ = details["id"]
-                    settings.handle_finished_file.write(str(id_) + "\n")
-
-                elif status == "ERROR":
-                    ids_status["error_last"] += 1
-                    logger.error(
-                        f"Processing loop. get page - error: {details['text']}"
-                    )
-                    if details["text"] == "not logined":
-                        settings.set_error_cookie(details["cookie"])
-                    settings.set_free_cookie(details["cookie"])
-                    if "request exception" in details["text"] or "request timeout exception" in details["text"]:  # noqa: E501
-                        settings.set_error_proxy(
-                            details["proxy_ip"], details["proxy_port"]
-                        )
-                    settings.set_free_proxy(
-                        details["proxy_ip"], details["proxy_port"]
-                    )
-                    settings.ids.append(int(details["id"]))
-
-                else:
-                    logger.warning(
-                        f"Processing loop, get page - unknown status: {status}, id: {details['id']}"  # noqa: E501
-                    )
-            else:
-                logger.warning(f"Processing loop - unknown task: {task}")
-
-            signal.signal(signal.SIGINT, s)
-
-        settings.close_files()
-
+        loader.run()
     except KeyboardInterrupt:
-        logger.info("Ctrl+^C, exitting...")
-        exit()
+        logger.info("Keyboard interrupt (Ctrl+^C), exiting the application...")

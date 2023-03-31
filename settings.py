@@ -5,44 +5,17 @@ import json
 import logging
 import os
 import random
+from typing import Any, Optional
 
 DEFAULTS_FILE = "defaults.json"
 SECRETS_FILE = "secrets.json"
 
 
-class Settings:
+class CLITool:
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.logger.debug("Loading settings")
+        ...
 
-        self._parse_cli_args()
-
-        self._load_defaults()
-        self._load_secrets()
-
-        self.useragents = self.defaults["useragents"]
-
-        self.headers = self.defaults["headers"]
-        # self.headers["User-Agent"] = self.useragents[
-        #     random.randrange(0, len(self.useragents))
-        # ]
-        # self.headers["Cookie"] = cookie
-
-        self.proxy_list = []
-        self.login_list = []
-        self.ids = set()
-
-        self.handle_table_file = None
-        self.handle_finished_file = None
-
-        self.temp_cookies_filename = "temp_cookies.txt"
-
-        self.logger.debug("Finished loading settings")
-
-        self.threads_per_proxy = 1
-        self.threads_per_cookie = 1
-
-    def _parse_cli_args(self):
+    def _parse_cli_args(self) -> None:
         parser = argparse.ArgumentParser()
 
         ids_group = parser.add_mutually_exclusive_group(required=True)
@@ -95,22 +68,57 @@ class Settings:
 
         self.qsize = self.options.qsize or min((self.options.threads + 2), 30)
 
-    def _load_defaults(self):
+
+class Settings(CLITool):
+    def __init__(self):
+        super().__init__()
+        self.logger = logging.getLogger(__name__)
+        self.logger.debug("Loading settings")
+
+        self._parse_cli_args()
+
+        self._load_defaults()
+        self._load_secrets()
+
+        self.useragents = self.defaults["useragents"]
+
+        self.headers = self.defaults["headers"]
+        # self.headers["User-Agent"] = self.useragents[
+        #     random.randrange(0, len(self.useragents))
+        # ]
+        # self.headers["Cookie"] = cookie
+
+        self.proxy_list = []
+        self.login_list = []
+        self.ids = set()
+
+        self.handle_table_file = None
+        self.handle_finished_file = None
+
+        self.temp_cookies_filename = "temp_cookies.txt"
+
+        self.logger.debug("Finished loading settings")
+
+        self.threads_per_proxy = 1
+        self.threads_per_cookie = 1
+
+    def _load_defaults(self) -> None:
         with open(DEFAULTS_FILE, "r") as f:
             self.defaults = json.load(f)
 
-    def _load_secrets(self):
+    def _load_secrets(self) -> None:
         with open(SECRETS_FILE, "r") as f:
             self.secrets = json.load(f)
 
-    # separate def, because ids lists eats many RAM => each thread eats many RAM
-    def prepare_lists(self):
-        self.logger.debug("start preparing lists")
+    # Separate def, because ids lists eats much RAM => each thread eats much RAM
+    def prepare_lists(self) -> None:
+        self.logger.info("Preparing lists")
 
         # Setting up proxy
         if self.options.noproxy:
-            self.logger.info("no loaded proxy")
+            self.logger.info("Not using proxy")
             # self.proxy_list.append(options.port)
+
         elif os.path.exists(self.options.proxy_file):
             proxies = list(open(self.options.proxy_file))
             for line in proxies:
@@ -121,16 +129,21 @@ class Settings:
                     {"ip": ip, "port": int(port), "in_use": 0, "fails": 0}
                 )
             random.shuffle(self.proxy_list)
-            self.logger.info(
-                "loaded %i proxies from file" % len(self.proxy_list)
-            )
+            self.logger.info(f"loaded {len(self.proxy_list)} proxies from file")
+
         else:  # len(self.proxy_list) == 0:
-            self.proxy_list = list(
-                {"ip": "127.0.0.1", "port": int(self.proxy_port)}
-            )
+            self.proxy_list = [
+                {
+                    "ip": "127.0.0.1",
+                    "port": self.proxy_port,
+                    "in_use": 0,
+                    "fails": 0,
+                }
+            ]
             self.logger.info(
-                "loaded single proxy - 127.0.0.1:%s" % str(self.proxy_port)
+                f"Loaded single proxy - 127.0.0.1:{self.proxy_port}"
             )
+            self.logger.info(f"Proxy list obtained: {self.proxy_list}")
 
         # Setting up credentials
         self.login_list = [
@@ -163,9 +176,7 @@ class Settings:
             )
             # old_ids = set(map(int, open(options.old)))
 
-            for id_ in old_ids:
-                if id_ > max_id:
-                    max_id = id_
+            max_id = max(max_id, max(old_ids))
 
             for id_ in range(1, max_id):
                 if (id_ not in old_ids) and (id_ in self.ids):
@@ -194,7 +205,7 @@ class Settings:
 
         self.logger.debug("end preparing lists")
 
-    def open_files(self):
+    def open_files(self) -> None:
         self.logger.debug("opening files to write results")
         self.handle_table_file = open(self.table_file, "a", encoding="utf8")
         self.handle_finished_file = open(
@@ -202,13 +213,13 @@ class Settings:
         )
         # log_file = open('log.txt', 'a', encoding='utf8')
 
-    def close_files(self):
+    def close_files(self) -> None:
         self.logger.debug("closing files with results")
         self.handle_table_file.close()
         # log_file.close()
         self.handle_finished_file.close()
 
-    def load_cookies(self):
+    def load_cookies(self) -> None:
         if not os.path.isfile(self.temp_cookies_filename):
             return
 
@@ -223,14 +234,14 @@ class Settings:
                         break
 
         self.logger.debug("load_cookies done")
-        self.logger.debug("cookies: %s" % str(self.login_list))
+        self.logger.debug(f"Cookies: {self.login_list}")
 
-    def save_cookies(self):
+    def save_cookies(self) -> None:
         self.logger.debug("Saving cookies")
         with open(self.temp_cookies_filename, "w") as f:
             json.dump(self.login_list, f)
 
-    def set_cookie(self, username, cookie):
+    def set_cookie(self, username: str, cookie: Any) -> None:
         for i, login in enumerate(self.login_list):
             if login["username"] == username:
                 self.login_list[i]["cookie"] = cookie
@@ -238,7 +249,7 @@ class Settings:
 
         self.save_cookies()
 
-    def get_free_cookie(self):
+    def get_free_cookie(self) -> Any:
         t = self.threads_per_cookie
         not_using_logins = [
             _ for _ in self.login_list if _.get("cookie") and _["in_use"] < t
@@ -260,13 +271,13 @@ class Settings:
 
         return cookie
 
-    def set_free_cookie(self, cookie):
+    def set_free_cookie(self, cookie: Any) -> None:
         for i, login in enumerate(self.login_list):
             if login.get("cookie") == cookie:
                 self.login_list[i]["in_use"] -= 1
 
-    def set_error_cookie(self, cookie):
-        self.logger.debug("set_error_cookie, cookie: %s" % cookie)
+    def set_error_cookie(self, cookie: Any) -> None:
+        self.logger.debug(f"Setting error cookie: {cookie}")
         self.logger.debug(self.login_list)
 
         for i, login in enumerate(self.login_list):
@@ -280,39 +291,43 @@ class Settings:
                         "cookie removed from pool (too many fails)"
                     )
 
-    def get_free_proxy(self):
+    def get_free_proxy(self) -> Optional[Any]:
         if self.options.noproxy:
             return {"ip": "", "port": -1}
-
+        self.logger.info(f"Proxy list: {self.proxy_list}")
         unused_proxies = [
             proxy
             for proxy in self.proxy_list
-            if proxy["in_use"] < self.threads_per_proxy
+            if proxy.get("in_use", 0) < self.threads_per_proxy
         ]
         if not unused_proxies:
+            self.logger.info(
+                f"No unused proxies found in the list: {self.proxy_list}"
+            )
             return
 
         random.shuffle(unused_proxies)
 
         selected_proxy = min(unused_proxies, key=lambda p: p["fails"])
         if selected_proxy["fails"] > 1000:
-            self.logger.debug("none free proxy")
+            self.logger.info("No free proxies, all have excessive fails")
             return
 
+        ip, port = selected_proxy["ip"], selected_proxy["port"]
         for i, proxy in enumerate(self.proxy_list):
-            if proxy["ip"] == selected_proxy["ip"] and proxy["port"] == selected_proxy["port"]:  # noqa: E501
+            if proxy["ip"] == ip and proxy["port"] == port:
                 self.proxy_list[i]["in_use"] += 1
                 return selected_proxy
 
-    def _set_proxy(self, key, ip, port):
+    def _set_proxy(self, key: str, ip: str, port: int) -> None:
         if port >= 0:
             self.logger.debug(f"Setting `{key}` proxy: IP={ip}, PORT={port}")
             for i, proxy in enumerate(self.proxy_list):
                 if proxy["ip"] == ip and proxy["port"] == port:
                     self.proxy_list[i][key] -= 1
 
-    def set_free_proxy(self, proxy_ip, proxy_port):
+    def set_free_proxy(self, proxy_ip: str, proxy_port: int) -> None:
         self._set_proxy("in_use", proxy_ip, proxy_port)
 
-    def set_error_proxy(self, proxy_ip, proxy_port):
+    def set_error_proxy(self, proxy_ip: str, proxy_port: int) -> None:
         self._set_proxy("fails", proxy_ip, proxy_port)
