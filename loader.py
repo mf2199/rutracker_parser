@@ -14,10 +14,12 @@ import parse
 from settings import Settings
 
 
-def worker(input_, output):
+def worker(input_, output, logger_=None):
     try:
         # A random logger name
-        logger_ = logging.getLogger(f"thread({random.randrange(1, 999):3})")
+        logger_ = logger_ or logging.getLogger(
+            f"thread({random.randrange(1, 999):3})"
+        )
         logger_.info("Starting thread...")
 
         for new_input in iter(input_.get, ("STOP", {})):
@@ -66,13 +68,15 @@ class Loader:
     def _start_threads(self):
         logger.info(f"Numbers of allocated threads: {self.options.threads}")
         for _ in range(self.options.threads):
-            p = Process(target=worker, args=(self.task_queue, self.done_queue))
+            p = Process(
+                target=worker, args=(self.task_queue, self.done_queue, logger)
+            )
             p.start()
             self._processes.append(p)
 
     def _stop_all_threads(self):
         logger.debug("Stopping all threads and exiting")
-        for _ in range(self.options.threads_num):
+        for _ in range(self.options.threads):
             self.task_queue.put(("STOP", {}))
 
     def _setup_timing(self):
@@ -91,11 +95,10 @@ class Loader:
             m, s = divmod(time_remaining, 60)
             h, m = divmod(m, 60)
             logger.info(
-                f'Last 10 sec: {self.counters["finished_last"]} - OK, '
-                f'{self.counters["nohash_last"]} - NOHASH, '
-                f'{self.counters["error_last"]} - ERROR, Remaining: '
-                f"{(len(self.settings.ids) - self._ids_pointer) // 1000,}, "
-                f'{h}:{m}"'
+                f"Last 10 sec: {self.counters['finished_last']} - OK, "
+                f"{self.counters['nohash_last']} - NOHASH, "
+                f"{self.counters['error_last']} - ERROR, Remaining: "
+                f"{(len(self.settings.ids) - self._ids_pointer)}, {h}:{m}"
             )
 
             self.counters["finished_all"] += self.counters["finished_last"]
@@ -137,10 +140,10 @@ class Loader:
             )
             self.settings.set_free_cookie(details["cookie"])
 
-            if not os.path.exists(self.options.descr_folder):
-                os.mkdir(self.options.descr_folder)
+            if not os.path.exists(self.options.desc_folder):
+                os.mkdir(self.options.desc_folder)
             path = os.path.join(
-                self.options.descr_folder, f"{id_ // 100000:03}/"
+                self.options.desc_folder, f"{id_ // 100000:03}/"
             )
             if not os.path.exists(path):
                 os.mkdir(path)
@@ -154,7 +157,7 @@ class Loader:
 
         elif status == "NO_HASH":
             self.counters["nohash_last"] += 1
-            logger.debug(f"Processing loop, get page - NO HASH, ID: {id_}")
+            logger.info(f"Processing loop, get page - NO HASH, ID: {id_}")
             self.settings.set_free_proxy(
                 details["proxy_ip"], details["proxy_port"]
             )
@@ -258,6 +261,8 @@ class Loader:
         while True:
             self._setup_timing()
 
+            logger.info(F"Task queue size: {self.task_queue.qsize()}")
+
             # Adding new tasks
             if (
                 self.task_queue.qsize() < self.settings.qsize
@@ -274,6 +279,7 @@ class Loader:
                 time.sleep(1)
                 self._exit_counter += 1
                 if self._exit_counter > 5:
+                    logger.info("Retry count exceeded, exiting")
                     self._stop_all_threads()
                     return
             else:
@@ -284,6 +290,7 @@ class Loader:
                 logger.info(f"TASK: {task}")
                 logger.info(f"STATUS: {status}")
                 logger.info(f"DETAILS: {_details}")
+                logger.info(f"TEXT: {_details.get('text')}")
             except queue.Empty:
                 if any(_.is_alive() for _ in self._processes):
                     logger.info("Some threads are still alive, continuing.")

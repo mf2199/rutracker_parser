@@ -22,7 +22,7 @@ class CLITool:
         ids_group.add_argument("--ids_file", "-if", default="")
         ids_group.add_argument("--ids", nargs=2, type=int, default=0)
 
-        parser.add_argument("--folder", "-f", default="descr")
+        parser.add_argument("--desc_folder", "-f", default="desc")
         parser.add_argument("--ids_finished", default="finished.txt")
         parser.add_argument("--ids_ignore", "-old", default="")
         parser.add_argument("--login_file", "-lf", default="login.txt")
@@ -63,8 +63,8 @@ class CLITool:
         self.table_file = self.options.table_file
         self.ids_finished = self.options.ids_finished
 
-        # for attr_name, attr_value in self.options.__dict__.items():
-        #     setattr(self, attr_name, attr_value)
+        for attr_name, attr_value in self.options.__dict__.items():
+            setattr(self, attr_name, attr_value)
 
         self.qsize = self.options.qsize or min((self.options.threads + 2), 30)
 
@@ -122,14 +122,20 @@ class Settings(CLITool):
         elif os.path.exists(self.options.proxy_file):
             proxies = list(open(self.options.proxy_file))
             for line in proxies:
-                if not line.strip():
-                    continue
-                ip, port = line.split()
-                self.proxy_list.append(
-                    {"ip": ip, "port": int(port), "in_use": 0, "fails": 0}
-                )
+                if line.strip():
+                    ip, port = line.split()
+                    self.proxy_list.append(
+                        {"ip": ip, "port": int(port), "in_use": 0, "fails": 0}
+                    )
             random.shuffle(self.proxy_list)
-            self.logger.info(f"loaded {len(self.proxy_list)} proxies from file")
+            self.logger.info(f"Loaded {len(self.proxy_list)} proxies from file")
+
+        elif self.defaults.get("proxies"):
+            self.proxy_list = [
+                {"ip": _[0], "port": _[1], "in_use": 0, "fails": 0}
+                for _ in self.defaults["proxies"]
+            ]
+            self.logger.info(f"Loaded {len(self.proxy_list)} default proxies")
 
         else:  # len(self.proxy_list) == 0:
             self.proxy_list = [
