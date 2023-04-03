@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-
+import json
 import logging
 import os
 import queue  # for exceptions
 import random
-
-# import requests
 import signal
 import time
 from multiprocessing import Process, Queue, freeze_support
@@ -152,6 +150,7 @@ class Loader:
             with open(filename, "w", encoding="utf8") as f:
                 f.write(details["description"])
 
+            logger.info(f"LINE: {details['line']}")
             self.settings.handle_table_file.write(f"{details['line']}\n")
             self.settings.handle_finished_file.write(f"{id_}\n")
 
@@ -287,10 +286,10 @@ class Loader:
 
             try:
                 task, status, _details = self.done_queue.get(timeout=1)
-                logger.info(f"TASK: {task}")
+                # logger.info(f"TASK: {task}")
                 logger.info(f"STATUS: {status}")
-                logger.info(f"DETAILS: {_details}")
-                logger.info(f"TEXT: {_details.get('text')}")
+                logger.info(f"DETAILS: {json.dumps(_details, indent=4)}")
+                # logger.info(f"TEXT: {_details.get('text')}")
             except queue.Empty:
                 if any(_.is_alive() for _ in self._processes):
                     logger.info("Some threads are still alive, continuing.")

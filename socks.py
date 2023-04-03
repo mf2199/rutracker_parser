@@ -28,9 +28,7 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMANGE.
 This module provides a standard socket-like interface for Python
 for tunneling connections through SOCKS proxies.
 
-"""
-
-"""
+--------------------------------------------------------------------------------
 
 Minor modifications made by Christopher Gilbert (http://motomastyle.com/)
 for use in PyLoris (http://pyloris.sourceforge.net/)
@@ -42,7 +40,7 @@ mainly to merge bug fixes found in Sourceforge
 
 import socket
 import struct
-import sys
+# import sys
 
 PROXY_TYPE_SOCKS4 = 1
 PROXY_TYPE_SOCKS5 = 2
@@ -135,8 +133,8 @@ def wrapmodule(module):
     """wrapmodule(module)
     Attempts to replace a module's socket library with a SOCKS socket. Must set
     a default proxy using setdefaultproxy(...) first.
-    This will only work on modules that import socket directly into the namespace;
-    most of the Python Standard Library falls into this category.
+    This will only work on modules that import socket directly into the
+    namespace; most of the Python Standard Library falls into this category.
     """
     if _defaultproxy is not None:
         module.socket.socket = socksocket

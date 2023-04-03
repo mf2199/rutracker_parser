@@ -238,7 +238,7 @@ class MainWindow(QMainWindow):
         id_ = int(self.model.item(index.row(), TREE_COLUMNS.index("id")).text())
         try:
             archive = TarFile.open(
-                "descr/%03i/%05i.tar.bz2" % (id_ // 100000, id_ // 1000), "r:bz2"  # noqa: E501
+                f"desc/{id_ // 100000:03}/{id_ // 1000:05}.tar.bz2", "r:bz2"
             )
             s = archive.extractfile("%08i" % id_).read().decode()
             archive.close()
@@ -286,10 +286,15 @@ class SearchThread(QThread):
             buffered_reader, encoding="utf8"
         )
 
-        founded_items = 0
+        count = 0
 
         for line in buffered_text_reader:
             item = line.strip().split(sep="\t")
+
+            print(item)
+            for i in range(len(TREE_COLUMNS)):
+                print(f"{TREE_COLUMNS[i]}: {item[i]}")
+
             next_ = False
 
             for w in words_contains:
@@ -317,10 +322,10 @@ class SearchThread(QThread):
             if next_:
                 continue
 
-            founded_items += 1
+            count += 1
             self.add_found_item.emit(item)
 
-            if founded_items >= limit:
+            if count >= limit:
                 self.status.emit("Поиск закончен.")
                 break
 

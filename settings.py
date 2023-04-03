@@ -95,7 +95,7 @@ class Settings(CLITool):
         self.handle_table_file = None
         self.handle_finished_file = None
 
-        self.temp_cookies_filename = "temp_cookies.txt"
+        self.temp_cookies_filename = "temp_cookies.json"
 
         self.logger.debug("Finished loading settings")
 
@@ -162,7 +162,7 @@ class Settings(CLITool):
         ]
 
         if self.options.ids_file:
-            self.logger.debug("Loading ids from file")
+            self.logger.debug("Loading IDs from file")
             self.ids = set(map(int, open(self.options.ids_file)))
         else:
             self.ids = set(range(self.options.ids[0], self.options.ids[1]))
@@ -245,7 +245,7 @@ class Settings(CLITool):
     def save_cookies(self) -> None:
         self.logger.debug("Saving cookies")
         with open(self.temp_cookies_filename, "w") as f:
-            json.dump(self.login_list, f)
+            json.dump(self.login_list, f, indent=4)
 
     def set_cookie(self, username: str, cookie: Any) -> None:
         for i, login in enumerate(self.login_list):
@@ -300,6 +300,7 @@ class Settings(CLITool):
     def get_free_proxy(self) -> Optional[Any]:
         if self.options.noproxy:
             return {"ip": "", "port": -1}
+
         self.logger.info(f"Proxy list: {self.proxy_list}")
         unused_proxies = [
             proxy
